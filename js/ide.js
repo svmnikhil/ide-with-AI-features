@@ -1,4 +1,5 @@
 import { IS_PUTER } from "./puter.js";
+import ChatComponent from './ChatComponent.js';
 
 const API_KEY = ""; // Get yours at https://platform.sulu.sh/apis/judge0
 
@@ -34,6 +35,7 @@ var layout;
 var sourceEditor;
 var stdinEditor;
 var stdoutEditor;
+var chatInterface;
 
 var $selectLanguage;
 var $compilerOptions;
@@ -49,7 +51,8 @@ var languages = {};
 var layoutConfig = {
     settings: {
         showPopoutIcon: false,
-        reorderEnabled: true
+        reorderEnabled: true,
+        useIframes: false
     },
     content: [{
         type: "row",
@@ -79,6 +82,16 @@ var layoutConfig = {
                 componentName: "stdout",
                 id: "stdout",
                 title: "Output",
+                isClosable: false,
+                componentState: {
+                    readOnly: true
+                }
+            },
+            {
+                type: "component",
+                componentName: "chatInterface",
+                id: "chatInterface",
+                title: "Chat",
                 isClosable: false,
                 componentState: {
                     readOnly: true
@@ -181,6 +194,7 @@ function run() {
     }
 
     stdoutEditor.setValue("");
+    chatInterface.setValue("");
     $statusLine.html("");
 
     let x = layout.root.getItemsById("stdout")[0];
@@ -188,6 +202,7 @@ function run() {
 
     let sourceValue = encode(sourceEditor.getValue());
     let stdinValue = encode(stdinEditor.getValue());
+    let chatInterfaceValue = encode(chatInterface.getValue());
     let languageId = getSelectedLanguageId();
     let compilerOptions = $compilerOptions.val();
     let commandLineArguments = $commandLineArguments.val();
@@ -202,6 +217,7 @@ function run() {
         source_code: sourceValue,
         language_id: languageId,
         stdin: stdinValue,
+        chat_interface: chatInterfaceValue,
         compiler_options: compilerOptions,
         command_line_arguments: commandLineArguments,
         redirect_stderr_to_stdout: true
@@ -334,6 +350,7 @@ function setFontSizeForAllEditors(fontSize) {
     sourceEditor.updateOptions({ fontSize: fontSize });
     stdinEditor.updateOptions({ fontSize: fontSize });
     stdoutEditor.updateOptions({ fontSize: fontSize });
+    chatInterface.updateOptions({ fontSize: fontSize });
 }
 
 async function loadLangauges() {
@@ -431,6 +448,7 @@ function setDefaults() {
     setFontSizeForAllEditors(fontSize);
     sourceEditor.setValue(DEFAULT_SOURCE);
     stdinEditor.setValue(DEFAULT_STDIN);
+    chatInterface.setValue(DEFAULT_CHAT_INTERFACE);
     $compilerOptions.val(DEFAULT_COMPILER_OPTIONS);
     $commandLineArguments.val(DEFAULT_CMD_ARGUMENTS);
 
@@ -442,6 +460,7 @@ function setDefaults() {
 function clear() {
     sourceEditor.setValue("");
     stdinEditor.setValue("");
+    chatInterface.setValue("");
     $compilerOptions.val("");
     $commandLineArguments.val("");
 
@@ -539,7 +558,9 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
     });
 
-    require(["vs/editor/editor.main"], function (ignorable) {
+    require(["vs/editor/editor.main"], function () {
+        console.log("IDE module loaded and executing");
+        console.log("Creating GoldenLayout instance...");
         layout = new GoldenLayout(layoutConfig, $("#judge0-site-content"));
 
         layout.registerComponent("source", function (container, state) {
@@ -583,12 +604,16 @@ document.addEventListener("DOMContentLoaded", async function () {
             });
         });
 
+        layout.registerComponent("chatInterface", function (container, state) {
+            state.themeColors = getCurrentThemeColors();
+            return new ChatComponent(container, state);
+        });
+
         layout.on("initialised", function () {
             setDefaults();
             refreshLayoutSize();
             window.top.postMessage({ event: "initialised" }, "*");
         });
-
         layout.init();
     });
 
@@ -628,6 +653,7 @@ document.addEventListener("DOMContentLoaded", async function () {
                 flavor: getSelectedLanguageFlavor(),
                 stdin: stdinEditor.getValue(),
                 stdout: stdoutEditor.getValue(),
+                chatInterface: chatInterface.getValue(),
                 compiler_options: $compilerOptions.val(),
                 command_line_arguments: $commandLineArguments.val()
             })), "*");
@@ -644,6 +670,9 @@ document.addEventListener("DOMContentLoaded", async function () {
             if (e.data.stdout) {
                 stdoutEditor.setValue(e.data.stdout);
             }
+            if (e.data.chatInterface) {
+                chatInterface.setValue(e.data.chatInterface);
+            }
             if (e.data.compiler_options) {
                 $compilerOptions.val(e.data.compiler_options);
             }
@@ -655,6 +684,15 @@ document.addEventListener("DOMContentLoaded", async function () {
             }
         }
     };
+
+    // Add a theme change listener to update the chat component
+    monaco.editor.onDidChangeTheme(() => {
+        const chatComponent = layout.root.getItemsById('chatInterface')[0]?.instance;
+        if (chatComponent) {
+            chatComponent.themeColors = getCurrentThemeColors();
+            chatComponent.init(); // Reinitialize with new colors
+        }
+    });
 });
 
 const DEFAULT_SOURCE = "\
@@ -780,6 +818,10 @@ const DEFAULT_STDIN = "\
 1 3\n\
 ";
 
+const DEFAULT_CHAT_INTERFACE = "\
+Hello, this is the chat interface!\n\
+";
+
 const DEFAULT_COMPILER_OPTIONS = "";
 const DEFAULT_CMD_ARGUMENTS = "";
 const DEFAULT_LANGUAGE_ID = 105; // C++ (GCC 14.1.0) (https://ce.judge0.com/languages/105)
@@ -843,4 +885,18 @@ const EXTENSIONS_TABLE = {
 
 function getLanguageForExtension(extension) {
     return EXTENSIONS_TABLE[extension] || { "flavor": CE, "language_id": 43 }; // Plain Text (https://ce.judge0.com/languages/43)
+}
+
+// Add this function to get current theme colors
+function getCurrentThemeColors() {
+    const isDark = document.documentElement.classList.contains('dark');
+    return {
+        background: isDark ? '#1e1e1e' : 'white',
+        outputBackground: isDark ? '#2d2d2d' : '#f8f9fa',
+        text: isDark ? '#d4d4d4' : '#212529',
+        border: isDark ? '#404040' : '#dee2e6',
+        buttonBg: '#0d6efd',
+        buttonText: 'white',
+        messageBackground: isDark ? '#363636' : '#e3f2fd'
+    };
 }

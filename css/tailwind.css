@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom components */
+@layer components {
+  .tw-btn-primary {
+    @apply tw-bg-judge0-primary tw-text-white tw-px-4 tw-py-2 tw-rounded hover:tw-bg-judge0-secondary;
+  }
+  
+  .tw-input-field {
+    @apply tw-border tw-border-gray-300 tw-rounded tw-px-3 tw-py-2 focus:tw-outline-none focus:tw-ring-2 focus:tw-ring-judge0-primary;
+  }
+} 
