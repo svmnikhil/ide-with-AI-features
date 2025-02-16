@@ -1,5 +1,6 @@
 import { IS_PUTER } from "./puter.js";
 import ChatComponent from './ChatComponent.js';
+import ChatRibbonComponent from './ChatRibbonComponent.js';
 
 const API_KEY = ""; // Get yours at https://platform.sulu.sh/apis/judge0
 
@@ -51,57 +52,58 @@ var languages = {};
 var layoutConfig = {
     settings: {
         showPopoutIcon: false,
-        reorderEnabled: true,
-        useIframes: false
+        showMaximiseIcon: false,
+        showCloseIcon: false
+    },
+    dimensions: {
+        borderWidth: 3,
+        headerHeight: 22
     },
     content: [{
         type: "row",
         content: [{
             type: "component",
-            width: 66,
             componentName: "source",
-            id: "source",
-            title: "Source Code",
-            isClosable: false,
             componentState: {
                 readOnly: false
-            }
+            },
+            isClosable: false,
+            title: "source"
         }, {
             type: "column",
             content: [{
-                type: "component",
-                componentName: "stdin",
-                id: "stdin",
-                title: "Input",
-                isClosable: false,
-                componentState: {
-                    readOnly: false
-                }
+                type: "stack",
+                content: [{
+                    type: "component",
+                    componentName: "stdin",
+                    componentState: {
+                        readOnly: false
+                    },
+                    title: "input"
+                }, {
+                    type: "component",
+                    componentName: "stdout",
+                    componentState: {
+                        readOnly: true
+                    },
+                    id: "stdout",
+                    title: "output"
+                }]
             }, {
                 type: "component",
-                componentName: "stdout",
-                id: "stdout",
-                title: "Output",
-                isClosable: false,
+                componentName: "chatRibbon",
                 componentState: {
                     readOnly: true
-                }
-            },
-            {
-                type: "component",
-                componentName: "chatInterface",
-                id: "chatInterface",
-                title: "Chat",
-                isClosable: false,
-                componentState: {
-                    readOnly: true
-                }
+                },
+                title: "chat"
             }]
         }]
     }]
 };
 
 var gPuterFile;
+
+var globalSourceCode = "";
 
 function encode(str) {
     return btoa(unescape(encodeURIComponent(str || "")));
@@ -489,8 +491,6 @@ document.addEventListener("DOMContentLoaded", async function () {
 
     refreshSiteContentHeight();
 
-    console.log("Hey, Judge0 IDE is open-sourced: https://github.com/judge0/ide. Have fun!");
-
     $selectLanguage = $("#select-language");
     $selectLanguage.change(function (event, data) {
         let skipSetDefaultSourceCodeName = (data && data.skipSetDefaultSourceCodeName) || !!gPuterFile;
@@ -559,8 +559,6 @@ document.addEventListener("DOMContentLoaded", async function () {
     });
 
     require(["vs/editor/editor.main"], function () {
-        console.log("IDE module loaded and executing");
-        console.log("Creating GoldenLayout instance...");
         layout = new GoldenLayout(layoutConfig, $("#judge0-site-content"));
 
         layout.registerComponent("source", function (container, state) {
@@ -573,6 +571,62 @@ document.addEventListener("DOMContentLoaded", async function () {
                 minimap: {
                     enabled: true
                 }
+            });
+
+            // Create a content widget for showing placeholder text
+            let placeholderWidget = {
+                domNode: null,
+                getId: function() {
+                    return 'placeholder.widget';
+                },
+                getDomNode: function() {
+                    if (!this.domNode) {
+                        this.domNode = document.createElement('div');
+                        this.domNode.style.position = 'absolute';
+                        this.domNode.style.color = '#888888';
+                        this.domNode.style.opacity = '0.8';
+                        this.domNode.style.fontStyle = 'italic';
+                        this.domNode.style.fontFamily = 'JetBrains Mono';
+                        this.domNode.style.pointerEvents = 'none';
+                        this.domNode.style.zIndex = '1000';
+                        this.domNode.style.padding = '0 4px';
+                        this.domNode.textContent = 'Type here...';
+                    }
+                    return this.domNode;
+                },
+                getPosition: function() {
+                    if (!window.currentCursorPosition) return null;
+                    return {
+                        position: window.currentCursorPosition,
+                        preference: [monaco.editor.ContentWidgetPositionPreference.ABOVE]
+                    };
+                }
+            };
+
+            // Add the widget to the editor
+            sourceEditor.addContentWidget(placeholderWidget);
+
+            sourceEditor.onDidChangeCursorPosition((e) => {
+                window.currentCursorPosition = e.position;
+                
+                // Force widget to update its position
+                sourceEditor.layoutContentWidget(placeholderWidget);
+            });
+
+            // Hide placeholder when typing or content changes
+            sourceEditor.onDidChangeModelContent(() => {
+                const position = sourceEditor.getPosition();
+                const model = sourceEditor.getModel();
+                const lineContent = model.getLineContent(position.lineNumber);
+                
+                // Only show placeholder if we're at the end of a line
+                if (position.column === lineContent.length + 1) {
+                    placeholderWidget.domNode.style.display = 'block';
+                } else {
+                    placeholderWidget.domNode.style.display = 'none';
+                }
+                
+                sourceEditor.layoutContentWidget(placeholderWidget);
             });
 
             sourceEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, run);
@@ -604,9 +658,13 @@ document.addEventListener("DOMContentLoaded", async function () {
             });
         });
 
-        layout.registerComponent("chatInterface", function (container, state) {
-            state.themeColors = getCurrentThemeColors();
-            return new ChatComponent(container, state);
+        layout.registerComponent("chatRibbon", function (container, state) {
+            // Create new state object with theme colors
+            const componentState = {
+                ...state,
+                themeColors: getCurrentThemeColors()
+            };
+            return new ChatRibbonComponent(container, componentState);
         });
 
         layout.on("initialised", function () {
@@ -615,6 +673,18 @@ document.addEventListener("DOMContentLoaded", async function () {
             window.top.postMessage({ event: "initialised" }, "*");
         });
         layout.init();
+
+        // Define a custom event emitter for theme changes
+        window.themeChangeEmitter = new monaco.Emitter();
+
+        // Update theme change listener
+        sourceEditor?.onDidChangeModelContent(() => {
+            const newThemeColors = getCurrentThemeColors();
+            console.log('Theme colors updated:', newThemeColors);
+            
+            // Emit theme change event
+            window.themeChangeEmitter.fire(newThemeColors);
+        });
     });
 
     let superKey = "⌘";
@@ -646,9 +716,11 @@ document.addEventListener("DOMContentLoaded", async function () {
         }
 
         if (e.data.action === "get") {
+            globalSourceCode = sourceEditor.getValue();
+            
             window.top.postMessage(JSON.parse(JSON.stringify({
                 event: "getResponse",
-                source_code: sourceEditor.getValue(),
+                source_code: globalSourceCode,
                 language_id: getSelectedLanguageId(),
                 flavor: getSelectedLanguageFlavor(),
                 stdin: stdinEditor.getValue(),
@@ -659,7 +731,8 @@ document.addEventListener("DOMContentLoaded", async function () {
             })), "*");
         } else if (e.data.action === "set") {
             if (e.data.source_code) {
-                sourceEditor.setValue(e.data.source_code);
+                globalSourceCode = e.data.source_code;
+                sourceEditor.setValue(globalSourceCode);
             }
             if (e.data.language_id && e.data.flavor) {
                 selectLanguageByFlavorAndId(e.data.language_id, e.data.flavor);
@@ -684,15 +757,6 @@ document.addEventListener("DOMContentLoaded", async function () {
             }
         }
     };
-
-    // Add a theme change listener to update the chat component
-    monaco.editor.onDidChangeTheme(() => {
-        const chatComponent = layout.root.getItemsById('chatInterface')[0]?.instance;
-        if (chatComponent) {
-            chatComponent.themeColors = getCurrentThemeColors();
-            chatComponent.init(); // Reinitialize with new colors
-        }
-    });
 });
 
 const DEFAULT_SOURCE = "\
@@ -889,7 +953,8 @@ function getLanguageForExtension(extension) {
 
 // Add this function to get current theme colors
 function getCurrentThemeColors() {
-    const isDark = document.documentElement.classList.contains('dark');
+    // Check if monaco editor is initialized and has the editor object
+    const isDark = monaco?.editor?.getActiveTheme?.() === 'vs-dark';
     return {
         background: isDark ? '#1e1e1e' : 'white',
         outputBackground: isDark ? '#2d2d2d' : '#f8f9fa',
